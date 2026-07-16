@@ -1,0 +1,27 @@
+{
+	"schemaVersion": 1,
+	"id": "mctgauth",
+	"version": "${version}",
+	"name": "MC Telegram Auth",
+	"description": "离线服务器的 Telegram 登录认证模组：玩家加入后被冻结，需通过配套 Telegram 机器人绑定并登录后方可解冻。",
+	"authors": [
+		"arnebiae"
+	],
+	"contact": {},
+	"license": "MIT",
+	"environment": "server",
+	"entrypoints": {
+		"server": [
+			"com.arnebiae.mctgauth.McTgAuthMod"
+		]
+	},
+	"mixins": [
+		"mctgauth.mixins.json"
+	],
+	"depends": {
+		"fabricloader": ">=0.19.3",
+		"minecraft": ">=26.1.2",
+		"java": ">=25",
+		"fabric-api": "*"
+	}
+}

@@ -1,0 +1,59 @@
+plugins {
+	id 'net.fabricmc.fabric-loom' version "${loom_version}"
+}
+
+version = project.mod_version
+group = project.maven_group
+
+repositories {
+	// 依赖第三方 mod 时才需要在此添加仓库；
+	// Loom 会自动添加下载 Minecraft 与库所需的核心仓库。
+}
+
+loom {
+	mods {
+		"mctgauth" {
+			sourceSet sourceSets.main
+		}
+	}
+}
+
+dependencies {
+	// 版本号见 gradle.properties。
+	// 26.1 起 Minecraft 未混淆，Loom 不做 remap，直接用 implementation/jar。
+	minecraft "com.mojang:minecraft:${project.minecraft_version}"
+	implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+
+	// Fabric API。
+	implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+}
+
+processResources {
+	def version = project.version
+	inputs.property "version", version
+
+	filesMatching("fabric.mod.json") {
+		expand "version": version
+	}
+}
+
+tasks.withType(JavaCompile).configureEach {
+	it.options.release = 25
+}
+
+java {
+	// Loom 会在存在时把 sourcesJar 挂到 build 任务上。
+	withSourcesJar()
+
+	sourceCompatibility = JavaVersion.VERSION_25
+	targetCompatibility = JavaVersion.VERSION_25
+}
+
+jar {
+	def projectName = project.name
+	inputs.property "projectName", projectName
+
+	from("LICENSE") {
+		rename { "${it}_$projectName"}
+	}
+}
