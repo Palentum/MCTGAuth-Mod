@@ -24,6 +24,9 @@ import java.util.UUID;
  * /account register 与 /account login 命令。冻结期间由 mixin 单独放行。
  */
 public final class AccountCommand {
+	/** 两次 register/login 命令之间的最小间隔（tick，1 秒），抑制宏高频刷命令。 */
+	private static final long ACCOUNT_COMMAND_COOLDOWN_TICKS = 20L;
+
 	private AccountCommand() {
 	}
 
@@ -57,12 +60,22 @@ public final class AccountCommand {
 			player.sendSystemMessage(msg.get("alreadyBound"));
 			return 1;
 		}
+		// 在途去重 + 每玩家命令冷却：抑制宏高频刷 /account register 对 Bot 的放大。
+		// 静默丢弃多余命令，避免向刷命令的玩家回刷提示（与 frozenHint 节流思路一致）。
+		if (entry.registerInFlight || auth.serverTick() < entry.nextAccountCommandTick) {
+			return 1;
+		}
+		entry.registerInFlight = true;
+		entry.nextAccountCommandTick = auth.serverTick() + ACCOUNT_COMMAND_COOLDOWN_TICKS;
 
 		MinecraftServer server = source.getServer();
 		String name = player.getGameProfile().name();
 		auth.api().createRegisterToken(uuid, name).whenComplete((resp, ex) -> server.execute(() -> {
 			ServerPlayer online = server.getPlayerList().getPlayer(uuid);
 			PlayerAuthEntry current = auth.getEntry(uuid);
+			if (current != null) {
+				current.registerInFlight = false; // HTTP 已结束，无论成败解除在途
+			}
 			if (online == null || current == null) {
 				return;
 			}
@@ -119,6 +132,15 @@ public final class AccountCommand {
 			player.sendSystemMessage(msg.get("alreadyPending"));
 			return 1;
 		}
+		// 在途去重 + 每玩家命令冷却：pendingLoginRequestId 仅在回调后写入，
+		// loginInFlight 覆盖“已发起未回调”窗口，防止重复创建登录请求
+		// （后到请求会覆盖 pendingLoginRequestId，令先前请求在 Bot 侧悬挂至过期）。
+		// 静默丢弃多余命令，避免向刷命令的玩家回刷提示。
+		if (entry.loginInFlight || auth.serverTick() < entry.nextAccountCommandTick) {
+			return 1;
+		}
+		entry.loginInFlight = true;
+		entry.nextAccountCommandTick = auth.serverTick() + ACCOUNT_COMMAND_COOLDOWN_TICKS;
 
 		MinecraftServer server = source.getServer();
 		String name = player.getGameProfile().name();
@@ -126,6 +148,9 @@ public final class AccountCommand {
 		auth.api().createLoginRequest(uuid, name, ip).whenComplete((resp, ex) -> server.execute(() -> {
 			ServerPlayer online = server.getPlayerList().getPlayer(uuid);
 			PlayerAuthEntry current = auth.getEntry(uuid);
+			if (current != null) {
+				current.loginInFlight = false; // HTTP 已结束，无论成败解除在途
+			}
 			if (online == null || current == null) {
 				return;
 			}

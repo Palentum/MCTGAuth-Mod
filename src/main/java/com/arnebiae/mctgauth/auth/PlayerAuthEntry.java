@@ -41,4 +41,13 @@ public class PlayerAuthEntry {
 
 	/** 已发放注册令牌、等待玩家在 Telegram 完成绑定期间为 true，暂停周期提示。 */
 	public boolean awaitingBinding;
+
+	/** register 命令在途标志：HTTP 发起到回调期间为 true，防止重复创建绑定令牌。 */
+	public boolean registerInFlight;
+
+	/** login 命令在途标志：覆盖 pendingLoginRequestId 写入前的窗口，防止重复创建登录请求。 */
+	public boolean loginInFlight;
+
+	/** 下次可再次发起 register/login 命令的 tick，抑制宏高频刷命令对 Bot 的放大。 */
+	public long nextAccountCommandTick;
 }
