@@ -80,6 +80,8 @@
 | `alreadyPending` | 已有待处理的登录请求 | — |
 | `rateLimited` | 操作过于频繁 | — |
 | `alreadyLoggedIn` | 已登录后重复执行命令 | — |
+| `loggedOut` | 主动登出，已重新冻结 | — |
+| `notLoggedIn` | 尚未登录时执行登出 | — |
 | `playersOnly` | 非玩家执行命令 | — |
 
 ## 游戏内命令
@@ -88,8 +90,9 @@
 | --- | --- |
 | `/account register` | 获取 Telegram 绑定令牌与深链；已绑定时提示改用登录 |
 | `/account login` | 发起登录请求，随后在 Telegram 中点击“批准” |
+| `/account logout` | 主动登出，重新冻结并回到待登录状态；仅本次会话失效，不解除绑定 |
 
-两条命令在冻结期间均可使用（模组单独放行 `account` 命令）。
+以上命令在冻结期间均可使用（模组单独放行 `account` 命令）。
 
 ## 工作流程
 
@@ -107,6 +110,7 @@
                                               ├─ denied    ──> 提示 loginDenied
                                               ├─ expired   ──> 提示 loginExpired
                                               └─ cancelled ──> 提示 loginCancelled
+玩家 /account logout   ──> 重新冻结 + 回到待登录 + 清除 IP 会话（不解除绑定）
 截止 tick 到达且未认证 ──> 以 kickTimeout 原因踢出
 玩家离线 ──> DELETE 待处理登录请求（fire-and-forget）+ 清理状态
 ```

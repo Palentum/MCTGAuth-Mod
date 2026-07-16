@@ -53,6 +53,8 @@ public class ModConfig {
 		m.put("alreadyPending", "§e[认证] §f你已有一个待处理的登录请求，请到 Telegram 中处理。");
 		m.put("rateLimited", "§c[认证] §f操作过于频繁，请稍后再试。");
 		m.put("alreadyLoggedIn", "§a[认证] §f你已经完成登录，无需重复操作。");
+		m.put("loggedOut", "§e[认证] §f你已登出，请输入 §a/account login §f重新登录。");
+		m.put("notLoggedIn", "§c[认证] §f你当前尚未登录，无需登出。");
 		m.put("playersOnly", "§c[认证] §f该命令只能由玩家执行。");
 		m.put("registerLinkText", "§b§n点此打开 Telegram 完成绑定");
 		return m;

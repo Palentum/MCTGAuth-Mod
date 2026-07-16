@@ -32,6 +32,7 @@ public final class AccountCommand {
 				Commands.literal("account")
 						.then(Commands.literal("register").executes(ctx -> runRegister(ctx.getSource(), auth)))
 						.then(Commands.literal("login").executes(ctx -> runLogin(ctx.getSource(), auth)))
+						.then(Commands.literal("logout").executes(ctx -> runLogout(ctx.getSource(), auth)))
 		);
 	}
 
@@ -161,6 +162,27 @@ public final class AccountCommand {
 		}
 		McTgAuthMod.LOGGER.warn("创建登录请求失败：{}", online.getUUID(), cause);
 		online.sendSystemMessage(msg.get("serviceUnavailable"));
+	}
+
+	private static int runLogout(CommandSourceStack source, AuthManager auth) {
+		ServerPlayer player = source.getPlayer();
+		Messages msg = auth.messages();
+		if (player == null) {
+			source.sendSystemMessage(msg.get("playersOnly"));
+			return 0;
+		}
+		UUID uuid = player.getUUID();
+		PlayerAuthEntry entry = auth.getEntry(uuid);
+		if (entry == null) {
+			return 0;
+		}
+		if (entry.state != AuthState.AUTHENTICATED) {
+			// 未登录（未绑定或已绑定未认证）无从登出，此时玩家仍处于冻结流程中。
+			player.sendSystemMessage(msg.get("notLoggedIn"));
+			return 1;
+		}
+		auth.logout(player, entry);
+		return 1;
 	}
 
 	/** 构造可点击的 Telegram 深链组件。 */

@@ -127,6 +127,37 @@ public class AuthManager {
 		}
 	}
 
+	/**
+	 * 玩家主动登出：以当前位置重新冻结、回到已绑定未认证、清除同 IP 会话。主线程调用。
+	 * 仅使本次会话失效，不解除 Telegram 绑定，故无需通知 Bot 服务。
+	 */
+	public void logout(ServerPlayer player, PlayerAuthEntry entry) {
+		UUID uuid = player.getUUID();
+
+		// 以当前位置为新的冻结点。
+		entry.freezeX = player.getX();
+		entry.freezeY = player.getY();
+		entry.freezeZ = player.getZ();
+		entry.freezeDimension = player.level().dimension().identifier().toString();
+
+		// 保存并开启无敌，避免冻结期间被伤害。
+		entry.savedInvulnerable = player.isInvulnerable();
+		player.setInvulnerable(true);
+
+		// 回到已绑定未认证，并重新计时踢出截止。
+		entry.state = AuthState.BOUND_UNAUTHENTICATED;
+		entry.deadlineTick = serverTick + (long) config.kickTimeoutSeconds * 20L;
+
+		// 重启周期提示，引导玩家重新登录。
+		entry.nextReminderTick = serverTick + REMINDER_INTERVAL_TICKS;
+
+		// 清除同 IP 会话，避免断线重连后被自动登录绕过重新认证。
+		ipSessions.remove(uuid);
+
+		frozenUuids.add(uuid);
+		player.sendSystemMessage(messages.get("loggedOut"));
+	}
+
 	// ============ 每 tick 驱动 ============
 
 	/** 服务器主线程每 tick 末调用。 */
