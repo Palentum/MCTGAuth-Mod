@@ -3,12 +3,23 @@ package com.arnebiae.mctgauth.mixin;
 import com.arnebiae.mctgauth.McTgAuthMod;
 import com.arnebiae.mctgauth.auth.AuthManager;
 
+import net.minecraft.network.protocol.Packet;
+import net.minecraft.network.protocol.common.ServerboundClientInformationPacket;
+import net.minecraft.network.protocol.common.ServerboundCustomPayloadPacket;
+import net.minecraft.network.protocol.common.ServerboundKeepAlivePacket;
+import net.minecraft.network.protocol.common.ServerboundPongPacket;
+import net.minecraft.network.protocol.common.ServerboundResourcePackPacket;
+import net.minecraft.network.protocol.game.ServerboundAcceptTeleportationPacket;
+import net.minecraft.network.protocol.game.ServerboundChatAckPacket;
 import net.minecraft.network.protocol.game.ServerboundChatCommandPacket;
 import net.minecraft.network.protocol.game.ServerboundChatCommandSignedPacket;
-import net.minecraft.network.protocol.game.ServerboundContainerClickPacket;
+import net.minecraft.network.protocol.game.ServerboundChatPacket;
+import net.minecraft.network.protocol.game.ServerboundChatSessionUpdatePacket;
+import net.minecraft.network.protocol.game.ServerboundChunkBatchReceivedPacket;
+import net.minecraft.network.protocol.game.ServerboundClientTickEndPacket;
+import net.minecraft.network.protocol.game.ServerboundConfigurationAcknowledgedPacket;
 import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
-import net.minecraft.network.protocol.game.ServerboundMoveVehiclePacket;
-import net.minecraft.network.protocol.game.ServerboundPlayerActionPacket;
+import net.minecraft.network.protocol.game.ServerboundPlayerLoadedPacket;
 import net.minecraft.server.level.ServerPlayer;
 
 import org.spongepowered.asm.mixin.Mixin;
@@ -16,17 +27,74 @@ import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 import java.util.UUID;
 
 /**
- * 在 netty 线程上拦截冻结玩家的移动 / 载具 / 动作 / 背包 / 命令包。
+ * 冻结玩家的封包拦截，运行在 netty 线程。
+ *
+ * 采用“默认拒绝”白名单：在协议分发的唯一入口 {@code shouldHandleMessage} 处，
+ * 冻结时丢弃一切不在白名单内的封包（vanilla 对 {@code shouldHandleMessage} 返回 false 的
+ * 封包会静默丢弃，无断连、无报错）。这一次性堵死所有会改动世界/背包/玩家状态的封包
+ * （创造槽注入、playerCommand、clientCommand、配方书、容器/物品族、告示牌等），
+ * 并防止未来新增封包留下缺口——黑名单天然漏项，白名单不会。
+ *
+ * 白名单内仍需精细过滤的封包（移动、命令）由下方各 handle* 注入继续处理：
+ *  - 移动：放行纯转头，取消越位并请求拉回；
+ *  - 命令：仅放行 /account。
  * 只读并发冻结集，任何游戏状态改动都通过 AuthManager 调度回主线程。
  */
 @Mixin(net.minecraft.server.network.ServerGamePacketListenerImpl.class)
 public abstract class ServerGamePacketListenerImplMixin {
 	@Shadow
 	public ServerPlayer player;
+
+	/**
+	 * 冻结期间放行的封包白名单。仅含两类：
+	 *  (1) 连接保活 / 流控 / 客户端设置等无副作用封包；
+	 *  (2) 需要下游精细过滤的移动与命令/聊天封包。
+	 * 其余一律丢弃。用 isInstance 判定以覆盖 ServerboundMovePlayerPacket 的
+	 * Pos/Rot/PosRot/StatusOnly 子类。高频封包置于前部以便短路。
+	 */
+	private static final Class<?>[] MCTGAUTH$FROZEN_WHITELIST = {
+		// —— 高频，前置短路 ——
+		ServerboundMovePlayerPacket.class,           // 环顾四周 + 越位拉回（下游 handleMovePlayer 过滤）
+		ServerboundKeepAlivePacket.class,            // 连接保活
+		ServerboundAcceptTeleportationPacket.class,  // 位置重同步的传送确认，必须放行
+		// —— 命令 / 聊天（下游 filterCommand 仅放行 /account；聊天交 Fabric 事件拦截并提示）——
+		ServerboundChatCommandPacket.class,
+		ServerboundChatCommandSignedPacket.class,
+		ServerboundChatPacket.class,
+		ServerboundChatAckPacket.class,              // 聊天计数确认，签名命令依赖
+		ServerboundChatSessionUpdatePacket.class,    // 注册签名公钥，签名命令依赖
+		// —— 连接 / 流控 / 设置，无副作用 ——
+		ServerboundPongPacket.class,
+		ServerboundClientInformationPacket.class,    // 客户端语言/视距等设置
+		ServerboundCustomPayloadPacket.class,        // 客户端 brand / 模组通道，模组兼容
+		ServerboundResourcePackPacket.class,         // 资源包状态，避免要求资源包的服务器误踢
+		ServerboundConfigurationAcknowledgedPacket.class, // 切回配置阶段确认
+		ServerboundClientTickEndPacket.class,        // 客户端 tick 边界标记
+		ServerboundPlayerLoadedPacket.class,         // 客户端世界加载完成信号
+		ServerboundChunkBatchReceivedPacket.class,   // 区块批次流控，缺则区块停止下发
+	};
+
+	/**
+	 * 协议分发入口：冻结时对非白名单封包返回 false，令 vanilla 静默丢弃。
+	 * 白名单封包放行，交由 vanilla 及下游 handle* 注入继续处理。
+	 */
+	@Inject(method = "shouldHandleMessage", at = @At("HEAD"), cancellable = true)
+	private void mctgauth$gateFrozen(Packet<?> packet, CallbackInfoReturnable<Boolean> cir) {
+		if (!isFrozen()) {
+			return;
+		}
+		for (Class<?> allowed : MCTGAUTH$FROZEN_WHITELIST) {
+			if (allowed.isInstance(packet)) {
+				return; // 放行
+			}
+		}
+		cir.setReturnValue(false); // 冻结期间丢弃所有非白名单封包
+	}
 
 	@Inject(method = "handleMovePlayer", at = @At("HEAD"), cancellable = true)
 	private void mctgauth$onMovePlayer(ServerboundMovePlayerPacket packet, CallbackInfo ci) {
@@ -46,27 +114,6 @@ public abstract class ServerGamePacketListenerImplMixin {
 		double dz = packet.getZ(player.getZ()) - player.getZ();
 		if (dx * dx + dy * dy + dz * dz > 1.0e-4) {
 			AuthManager.requestResync(player.getUUID());
-		}
-	}
-
-	@Inject(method = "handleMoveVehicle", at = @At("HEAD"), cancellable = true)
-	private void mctgauth$onMoveVehicle(ServerboundMoveVehiclePacket packet, CallbackInfo ci) {
-		if (isFrozen()) {
-			ci.cancel();
-		}
-	}
-
-	@Inject(method = "handlePlayerAction", at = @At("HEAD"), cancellable = true)
-	private void mctgauth$onPlayerAction(ServerboundPlayerActionPacket packet, CallbackInfo ci) {
-		if (isFrozen()) {
-			ci.cancel();
-		}
-	}
-
-	@Inject(method = "handleContainerClick", at = @At("HEAD"), cancellable = true)
-	private void mctgauth$onContainerClick(ServerboundContainerClickPacket packet, CallbackInfo ci) {
-		if (isFrozen()) {
-			ci.cancel();
 		}
 	}
 
