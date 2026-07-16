@@ -50,7 +50,8 @@ public class AuthManager {
 	// netty 线程写、主线程消费的待拉回标记：mixin 取消越位移动包后置位。
 	private static final Set<UUID> pendingResync = ConcurrentHashMap.newKeySet();
 
-	private MinecraftServer server;
+	// setServer（主线程启动时）写、netty/HTTP 线程读，volatile 直接消除跨线程可见性竞争。
+	private volatile MinecraftServer server;
 	private long serverTick;
 	private long nextIpSessionSweepTick;
 
