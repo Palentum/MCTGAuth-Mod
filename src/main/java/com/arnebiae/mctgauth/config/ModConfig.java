@@ -8,6 +8,7 @@ import net.fabricmc.loader.api.FabricLoader;
 import java.io.IOException;
 import java.io.Reader;
 import java.io.Writer;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -21,16 +22,20 @@ import java.util.Map;
 public class ModConfig {
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
 
+	private static final String DEFAULT_API_BASE_URL = "http://127.0.0.1:8632";
+	private static final int DEFAULT_KICK_TIMEOUT_SECONDS = 120;
+	private static final int DEFAULT_POLL_INTERVAL_TICKS = 40;
+
 	/** Bot 服务地址。 */
-	public String apiBaseUrl = "http://127.0.0.1:8632";
+	public String apiBaseUrl = DEFAULT_API_BASE_URL;
 	/** 与 Bot 服务约定的 Bearer 令牌。 */
 	public String apiToken = "change-me";
 	/** 未认证玩家的踢出超时（秒）。 */
-	public int kickTimeoutSeconds = 120;
+	public int kickTimeoutSeconds = DEFAULT_KICK_TIMEOUT_SECONDS;
 	/** 同 IP 免登录会话时长（分钟），0 表示禁用。 */
 	public int ipSessionMinutes = 30;
 	/** 轮询登录请求状态的间隔（tick）。 */
-	public int pollIntervalTicks = 40;
+	public int pollIntervalTicks = DEFAULT_POLL_INTERVAL_TICKS;
 	/** 全部玩家可见文案，中文，含 § 颜色码。 */
 	public Map<String, String> messages = defaultMessages();
 
@@ -80,8 +85,55 @@ public class ModConfig {
 			config = new ModConfig();
 			config.save(path);
 		}
+		config.sanitize();
 		config.warnInsecureToken();
 		return config;
+	}
+
+	/**
+	 * 校正非法的数值 / URL 配置，避免运行期故障：
+	 *  - kickTimeoutSeconds ≤ 0 会使玩家加入即被踢；
+	 *  - pollIntervalTicks ≤ 0 会使登录轮询失去节流、每 tick 轰炸 Bot 服务；
+	 *  - ipSessionMinutes < 0 虽因 >0 守卫恰好等价于禁用，这里显式归一为 0；
+	 *  - apiBaseUrl 畸形会让 BotApiClient.base() 的 URI.create 在主线程同步抛错、中断玩家 join。
+	 * 非法值一律回落到默认值并告警，保证服务器可正常启动运行。
+	 */
+	private void sanitize() {
+		if (kickTimeoutSeconds <= 0) {
+			McTgAuthMod.LOGGER.warn("kickTimeoutSeconds={} 非法（须为正数，否则玩家加入即被踢），已重置为默认值 {}。",
+					kickTimeoutSeconds, DEFAULT_KICK_TIMEOUT_SECONDS);
+			kickTimeoutSeconds = DEFAULT_KICK_TIMEOUT_SECONDS;
+		}
+		if (pollIntervalTicks <= 0) {
+			McTgAuthMod.LOGGER.warn("pollIntervalTicks={} 非法（须为正数，否则会每 tick 轰炸 Bot 服务），已重置为默认值 {}。",
+					pollIntervalTicks, DEFAULT_POLL_INTERVAL_TICKS);
+			pollIntervalTicks = DEFAULT_POLL_INTERVAL_TICKS;
+		}
+		if (ipSessionMinutes < 0) {
+			McTgAuthMod.LOGGER.warn("ipSessionMinutes={} 非法（不能为负），已重置为 0（禁用同 IP 免登录）。", ipSessionMinutes);
+			ipSessionMinutes = 0;
+		}
+		if (!isValidHttpUrl(apiBaseUrl)) {
+			McTgAuthMod.LOGGER.error("apiBaseUrl=\"{}\" 畸形或非 http(s) 地址，已重置为默认值 {}；请在 config/mctgauth.json 中改为正确的 Bot 服务地址。",
+					apiBaseUrl, DEFAULT_API_BASE_URL);
+			apiBaseUrl = DEFAULT_API_BASE_URL;
+		}
+	}
+
+	/** 校验为可安全用于 HttpRequest 的 http/https 绝对地址（含主机名）。 */
+	private static boolean isValidHttpUrl(String url) {
+		if (url == null || url.isBlank()) {
+			return false;
+		}
+		try {
+			URI uri = URI.create(url.trim());
+			String scheme = uri.getScheme();
+			return uri.getHost() != null
+					&& scheme != null
+					&& (scheme.equalsIgnoreCase("http") || scheme.equalsIgnoreCase("https"));
+		} catch (IllegalArgumentException e) {
+			return false;
+		}
 	}
 
 	/** 缺失的 messages 键用默认值补齐，避免读取到 null。 */
