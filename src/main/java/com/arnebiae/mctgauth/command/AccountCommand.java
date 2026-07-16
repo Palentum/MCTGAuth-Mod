@@ -72,6 +72,8 @@ public final class AccountCommand {
 			// 展示 token、机器人用户名与可点击深链。
 			online.sendSystemMessage(msg.get("registerToken", "token", resp.token, "bot", safe(resp.botUsername)));
 			online.sendSystemMessage(deepLink(auth, resp.botUsername, resp.token));
+			// 进入等待绑定，暂停 needRegister 周期提示。
+			current.awaitingBinding = true;
 		}));
 		return 1;
 	}
@@ -135,6 +137,8 @@ public final class AccountCommand {
 			current.pendingLoginRequestId = resp.requestId;
 			// 让轮询尽快开始。
 			current.pollCooldownUntilTick = auth.serverTick();
+			// 已确认绑定并进入等待批准，清除等待绑定标记；此后由 pendingLoginRequestId 负责暂停提示。
+			current.awaitingBinding = false;
 			online.sendSystemMessage(msg.get("loginSent"));
 		}));
 		return 1;

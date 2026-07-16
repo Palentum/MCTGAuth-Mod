@@ -33,6 +33,8 @@ public class AuthManager {
 	private static final long BINDING_RETRY_TICKS = 100;
 	/** frozenHint 节流间隔（毫秒）。 */
 	private static final long HINT_THROTTLE_MILLIS = 2000;
+	/** 未注册/未登录周期提示间隔（tick，3 秒）。 */
+	private static final int REMINDER_INTERVAL_TICKS = 60;
 
 	private final ModConfig config;
 	private final BotApiClient api;
@@ -176,6 +178,16 @@ public class AuthManager {
 				lookupBinding(player, entry);
 			}
 
+			// 周期提示：绑定状态已知但尚未认证时，每 3 秒重发对应引导消息；
+			// 等待 Telegram 绑定（已发注册令牌）或等待登录批准期间暂停发送，避免刷屏。
+			if (entry.nextReminderTick != 0 && serverTick >= entry.nextReminderTick) {
+				entry.nextReminderTick = serverTick + REMINDER_INTERVAL_TICKS;
+				if (entry.pendingLoginRequestId == null && !entry.awaitingBinding) {
+					player.sendSystemMessage(messages.get(
+							entry.state == AuthState.BOUND_UNAUTHENTICATED ? "needLogin" : "needRegister"));
+				}
+			}
+
 			// 轮询待处理的登录请求。
 			if (entry.pendingLoginRequestId != null
 					&& !entry.pollInFlight
@@ -227,6 +239,8 @@ public class AuthManager {
 				entry.state = AuthState.UNBOUND;
 				online.sendSystemMessage(messages.get("needRegister"));
 			}
+			// 启动周期提示（首条已即时发送，3 秒后开始重复）。
+			entry.nextReminderTick = serverTick + REMINDER_INTERVAL_TICKS;
 		}));
 	}
 

@@ -35,4 +35,10 @@ public class PlayerAuthEntry {
 
 	/** 上次发送 frozenHint 的时间戳（毫秒），用于节流。 */
 	public long lastHintMillis;
+
+	/** 下次发送未注册/未登录周期提示的 tick（0 表示绑定状态未知，暂不提示）。 */
+	public long nextReminderTick;
+
+	/** 已发放注册令牌、等待玩家在 Telegram 完成绑定期间为 true，暂停周期提示。 */
+	public boolean awaitingBinding;
 }
