@@ -33,6 +33,8 @@ public class AuthManager {
 	private static final long HINT_THROTTLE_MILLIS = 2000;
 	/** 未注册/未登录周期提示间隔（tick，3 秒）。 */
 	private static final int REMINDER_INTERVAL_TICKS = 60;
+	/** IP 会话过期项惰性驱逐的扫描间隔（tick，60 秒）。 */
+	private static final long IP_SESSION_SWEEP_TICKS = 1200;
 
 	private final ModConfig config;
 	private final BotApiClient api;
@@ -50,6 +52,7 @@ public class AuthManager {
 
 	private MinecraftServer server;
 	private long serverTick;
+	private long nextIpSessionSweepTick;
 
 	public AuthManager(ModConfig config, BotApiClient api, Messages messages) {
 		this.config = config;
@@ -161,6 +164,9 @@ public class AuthManager {
 	/** 服务器主线程每 tick 末调用。 */
 	public void onEndServerTick(MinecraftServer server) {
 		this.serverTick++;
+		// 惰性驱逐过期 IP 会话，避免长期运行下 ipSessions 无界增长。
+		// 放在 entries 提前返回之前，空服（无在线玩家）时同样收敛内存。
+		sweepExpiredIpSessions();
 		if (entries.isEmpty()) {
 			return;
 		}
@@ -238,6 +244,21 @@ public class AuthManager {
 		player.connection.teleport(
 				new PositionMoveRotation(new Vec3(entry.freezeX, entry.freezeY, entry.freezeZ), Vec3.ZERO, 0.0F, 0.0F),
 				Relative.ROTATION);
+	}
+
+	/** 按 IP_SESSION_SWEEP_TICKS 间隔移除已过期的 IP 会话条目。仅主线程调用。 */
+	private void sweepExpiredIpSessions() {
+		if (ipSessions.isEmpty() || serverTick < nextIpSessionSweepTick) {
+			return;
+		}
+		nextIpSessionSweepTick = serverTick + IP_SESSION_SWEEP_TICKS;
+		long now = System.currentTimeMillis();
+		Iterator<IpSession> it = ipSessions.values().iterator();
+		while (it.hasNext()) {
+			if (now >= it.next().expiresAtMillis()) {
+				it.remove();
+			}
+		}
 	}
 
 	// ============ HTTP 流程 ============
