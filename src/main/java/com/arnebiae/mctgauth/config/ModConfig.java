@@ -87,6 +87,7 @@ public class ModConfig {
 		}
 		config.sanitize();
 		config.warnInsecureToken();
+		config.warnInsecureApiUrl();
 		return config;
 	}
 
@@ -152,6 +153,46 @@ public class ModConfig {
 		if (apiToken == null || apiToken.isEmpty() || "change-me".equals(apiToken)) {
 			McTgAuthMod.LOGGER.warn("apiToken 尚未设置或仍为默认值 \"change-me\"，请在 config/mctgauth.json 中改为与 Bot 服务一致的强令牌。");
 		}
+	}
+
+	/**
+	 * 远程 Bot 使用明文 http 会让 Authorization: Bearer 令牌与玩家数据在链路上明文传输，
+	 * 可被同网段或路径上的中间人截获、重放。仅当目标是回环地址时明文 http 才安全；
+	 * 其余情形告警，建议改用 https://，或通过本地隧道（SSH 端口转发 / WireGuard 等）访问远程 Bot。
+	 */
+	private void warnInsecureApiUrl() {
+		if (apiBaseUrl == null || apiBaseUrl.isBlank()) {
+			return;
+		}
+		try {
+			URI uri = URI.create(apiBaseUrl.trim());
+			String scheme = uri.getScheme();
+			if (scheme != null && scheme.equalsIgnoreCase("http") && !isLoopbackHost(uri.getHost())) {
+				McTgAuthMod.LOGGER.warn("apiBaseUrl=\"{}\" 使用明文 http 连接非回环地址，Authorization: Bearer 令牌与玩家数据将明文传输、可被中间人截获或重放；"
+						+ "请改用 https://，或通过本地隧道（SSH 端口转发 / WireGuard 等）访问远程 Bot 服务。", apiBaseUrl);
+			}
+		} catch (IllegalArgumentException ignored) {
+			// 畸形 URL 已在 sanitize() 中回落默认值，此处无需重复告警。
+		}
+	}
+
+	/** 按字面量判断主机是否为回环地址（loopback），不触发 DNS 解析。 */
+	private static boolean isLoopbackHost(String host) {
+		if (host == null || host.isBlank()) {
+			return false;
+		}
+		String h = host.trim();
+		// 去除 IPv6 字面量的方括号，如 URI.getHost() 返回的 "[::1]" -> "::1"。
+		if (h.startsWith("[") && h.endsWith("]")) {
+			h = h.substring(1, h.length() - 1);
+		}
+		if (h.equalsIgnoreCase("localhost")) {
+			return true;
+		}
+		if (h.equals("::1") || h.equals("0:0:0:0:0:0:0:1")) {
+			return true;
+		}
+		return h.startsWith("127."); // 127.0.0.0/8 全部为回环
 	}
 
 	private void save(Path path) {

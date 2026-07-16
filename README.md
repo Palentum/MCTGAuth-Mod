@@ -53,6 +53,8 @@
 | --- | --- | --- | --- |
 | `apiBaseUrl` | string | `http://127.0.0.1:8632` | Bot 服务的基础地址 |
 | `apiToken` | string | `change-me` | 与 Bot 服务约定的 Bearer 令牌，务必修改 |
+
+> **安全提示**：`Authorization: Bearer` 令牌与玩家数据随每次请求发送。仅当 Bot 与 Minecraft 服务器同机、经回环地址（`127.0.0.1` / `localhost` / `::1`）通信时，明文 `http://` 才安全。**Bot 部署在远程主机时必须使用 `https://`，或经本地隧道（SSH 端口转发 / WireGuard 等）访问**，否则令牌与玩家数据会明文传输、可被中间人截获或重放。模组在检测到「非回环地址 + 明文 http」时会在启动日志打印警告。
 | `kickTimeoutSeconds` | int | `120` | 未完成认证的玩家在多少秒后被踢出 |
 | `ipSessionMinutes` | int | `30` | 同 IP 免登录会话时长（分钟），`0` 表示禁用 |
 | `pollIntervalTicks` | int | `40` | 轮询登录请求状态的间隔（tick，20 tick ≈ 1 秒） |
