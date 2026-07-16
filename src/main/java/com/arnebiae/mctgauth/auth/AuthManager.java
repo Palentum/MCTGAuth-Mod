@@ -27,8 +27,6 @@ import java.util.concurrent.ConcurrentHashMap;
  *  - 所有 HTTP 回调必须先 server.execute(...) 跳回主线程，再重新校验玩家在线。
  */
 public class AuthManager {
-	/** 位置重同步周期（tick）。 */
-	private static final int RESYNC_INTERVAL_TICKS = 20;
 	/** 绑定查询失败后的重试间隔（tick）。 */
 	private static final long BINDING_RETRY_TICKS = 100;
 	/** frozenHint 节流间隔（毫秒）。 */
@@ -196,12 +194,13 @@ public class AuthManager {
 				continue;
 			}
 
-			// 位置重同步：mixin 标记的越位拉回立即执行；周期兜底覆盖服务端位置
-			// 被外力（水流、活塞、实体推挤）改变的情况。
+			// 位置钉死：每 tick 清零速度，从源头阻断外力（水流、活塞、实体推挤、
+			// 爆炸击退）在服务端累积速度并积分进位置；随后每 tick 校正本 tick 已产生
+			// 的位移。主动越位由 mixin 置 pendingResync，与外力位移一并在阈值判定后
+			// 即时拉回（≤1 tick），不再有此前 20 tick 周期兜底留下的约 1 秒离位窗口。
+			player.setDeltaMovement(Vec3.ZERO);
 			boolean force = pendingResync.remove(uuid);
-			if (force || serverTick % RESYNC_INTERVAL_TICKS == 0) {
-				resyncPosition(player, entry, force);
-			}
+			resyncPosition(player, entry, force);
 
 			// 绑定查询失败后的重试。
 			if (entry.bindingRetryAtTick != 0 && serverTick >= entry.bindingRetryAtTick) {
