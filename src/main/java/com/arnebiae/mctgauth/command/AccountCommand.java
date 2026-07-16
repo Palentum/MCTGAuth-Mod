@@ -83,11 +83,11 @@ public final class AccountCommand {
 				handleRegisterError(online, msg, current, ex);
 				return;
 			}
-			// 展示 token、机器人用户名与可点击深链。
-			online.sendSystemMessage(msg.get("registerToken", "token", resp.token, "bot", safe(resp.botUsername)));
-			online.sendSystemMessage(deepLink(auth, resp.botUsername, resp.token));
-			// 进入等待绑定，暂停 needRegister 周期提示。
+			// 先置等待绑定：必须早于发消息/深链，避免文案构造抛异常跳过该行导致 needRegister 提示继续刷屏。
 			current.awaitingBinding = true;
+			// 展示 token、机器人用户名与可点击深链。
+			online.sendSystemMessage(msg.get("registerToken", "token", safe(resp.token), "bot", safe(resp.botUsername)));
+			online.sendSystemMessage(deepLink(auth, resp.botUsername, resp.token));
 		}));
 		return 1;
 	}
@@ -210,12 +210,17 @@ public final class AccountCommand {
 		return 1;
 	}
 
-	/** 构造可点击的 Telegram 深链组件。 */
+	/** 构造可点击的 Telegram 深链组件；URL 非法时退化为纯文本，避免异常中断回调。 */
 	private static Component deepLink(AuthManager auth, String botUsername, String token) {
 		String bot = safe(botUsername);
-		String url = "https://t.me/" + bot + "?start=" + token;
+		String url = "https://t.me/" + bot + "?start=" + safe(token);
 		MutableComponent text = Component.literal(auth.messages().raw("registerLinkText"));
-		return text.withStyle(Style.EMPTY.withClickEvent(new ClickEvent.OpenUrl(URI.create(url))));
+		try {
+			return text.withStyle(Style.EMPTY.withClickEvent(new ClickEvent.OpenUrl(URI.create(url))));
+		} catch (IllegalArgumentException e) {
+			McTgAuthMod.LOGGER.warn("构造 Telegram 深链失败，退化为纯文本：{}", url, e);
+			return text;
+		}
 	}
 
 	private static String safe(String s) {
