@@ -30,8 +30,22 @@ public abstract class ServerGamePacketListenerImplMixin {
 
 	@Inject(method = "handleMovePlayer", at = @At("HEAD"), cancellable = true)
 	private void mctgauth$onMovePlayer(ServerboundMovePlayerPacket packet, CallbackInfo ci) {
-		if (isFrozen()) {
-			ci.cancel();
+		if (!isFrozen()) {
+			return;
+		}
+		// 纯转头包放行，允许玩家冻结期间环顾四周。
+		if (!packet.hasPosition()) {
+			return;
+		}
+		ci.cancel();
+		// 被取消的移动包不会更新服务端位置，客户端会在本地自由走动，
+		// 必须主动把客户端拉回。冻结期间服务端位置不变，netty 线程读取安全。
+		// 仅在客户端坐标实际偏离时请求拉回，避免 teleport 确认包引发循环。
+		double dx = packet.getX(player.getX()) - player.getX();
+		double dy = packet.getY(player.getY()) - player.getY();
+		double dz = packet.getZ(player.getZ()) - player.getZ();
+		if (dx * dx + dy * dy + dz * dz > 1.0e-4) {
+			AuthManager.requestResync(player.getUUID());
 		}
 	}
 

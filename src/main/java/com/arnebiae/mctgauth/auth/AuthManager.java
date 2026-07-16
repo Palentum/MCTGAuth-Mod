@@ -7,6 +7,9 @@ import com.arnebiae.mctgauth.http.BotApiClient;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.PositionMoveRotation;
+import net.minecraft.world.entity.Relative;
+import net.minecraft.world.phys.Vec3;
 
 import java.util.HashMap;
 import java.util.Iterator;
@@ -42,6 +45,9 @@ public class AuthManager {
 	// netty 线程可读的冻结镜像。
 	private static final Set<UUID> frozenUuids = ConcurrentHashMap.newKeySet();
 
+	// netty 线程写、主线程消费的待拉回标记：mixin 取消越位移动包后置位。
+	private static final Set<UUID> pendingResync = ConcurrentHashMap.newKeySet();
+
 	private MinecraftServer server;
 	private long serverTick;
 
@@ -64,6 +70,11 @@ public class AuthManager {
 		return frozenUuids.contains(uuid);
 	}
 
+	/** 供 mixin（netty 线程）在取消越位移动包后请求主线程把客户端拉回冻结点。 */
+	public static void requestResync(UUID uuid) {
+		pendingResync.add(uuid);
+	}
+
 	// ============ 玩家生命周期 ============
 
 	/** 玩家加入：冻结并启动认证流程。主线程调用。 */
@@ -75,8 +86,6 @@ public class AuthManager {
 		entry.freezeX = player.getX();
 		entry.freezeY = player.getY();
 		entry.freezeZ = player.getZ();
-		entry.freezeYaw = player.getYRot();
-		entry.freezePitch = player.getXRot();
 		entry.freezeDimension = player.level().dimension().identifier().toString();
 
 		// 保存并开启无敌，避免冻结期间被伤害。
@@ -109,6 +118,7 @@ public class AuthManager {
 		UUID uuid = player.getUUID();
 		PlayerAuthEntry entry = entries.remove(uuid);
 		frozenUuids.remove(uuid);
+		pendingResync.remove(uuid);
 		if (entry != null && entry.pendingLoginRequestId != null) {
 			// fire-and-forget：忽略结果与异常。
 			api.cancelLoginRequest(entry.pendingLoginRequestId).exceptionally(ex -> null);
@@ -145,6 +155,7 @@ public class AuthManager {
 			if (serverTick >= entry.deadlineTick) {
 				it.remove();
 				frozenUuids.remove(uuid);
+				pendingResync.remove(uuid);
 				if (entry.pendingLoginRequestId != null) {
 					api.cancelLoginRequest(entry.pendingLoginRequestId).exceptionally(ex -> null);
 				}
@@ -152,9 +163,11 @@ public class AuthManager {
 				continue;
 			}
 
-			// 位置重同步。
-			if (serverTick % RESYNC_INTERVAL_TICKS == 0) {
-				resyncPosition(player, entry);
+			// 位置重同步：mixin 标记的越位拉回立即执行；周期兜底覆盖服务端位置
+			// 被外力（水流、活塞、实体推挤）改变的情况。
+			boolean force = pendingResync.remove(uuid);
+			if (force || serverTick % RESYNC_INTERVAL_TICKS == 0) {
+				resyncPosition(player, entry, force);
 			}
 
 			// 绑定查询失败后的重试。
@@ -172,14 +185,17 @@ public class AuthManager {
 		}
 	}
 
-	private void resyncPosition(ServerPlayer player, PlayerAuthEntry entry) {
+	private void resyncPosition(ServerPlayer player, PlayerAuthEntry entry, boolean force) {
 		double dx = player.getX() - entry.freezeX;
 		double dy = player.getY() - entry.freezeY;
 		double dz = player.getZ() - entry.freezeZ;
-		if (dx * dx + dy * dy + dz * dz > 1.0e-4) {
-			// 服务端权威位置同步，把玩家拉回冻结点。
-			player.connection.teleport(entry.freezeX, entry.freezeY, entry.freezeZ, entry.freezeYaw, entry.freezePitch);
+		if (!force && dx * dx + dy * dy + dz * dz <= 1.0e-4) {
+			return;
 		}
+		// 绝对位置 + 相对旋转（增量 0）+ 速度清零：把客户端拉回冻结点且不打断玩家视角。
+		player.connection.teleport(
+				new PositionMoveRotation(new Vec3(entry.freezeX, entry.freezeY, entry.freezeZ), Vec3.ZERO, 0.0F, 0.0F),
+				Relative.ROTATION);
 	}
 
 	// ============ HTTP 流程 ============
@@ -266,6 +282,7 @@ public class AuthManager {
 	public void unfreeze(ServerPlayer player, PlayerAuthEntry entry, Component welcome) {
 		UUID uuid = player.getUUID();
 		frozenUuids.remove(uuid);
+		pendingResync.remove(uuid);
 		player.setInvulnerable(entry.savedInvulnerable);
 		if (config.ipSessionMinutes > 0) {
 			long expiresAt = System.currentTimeMillis() + (long) config.ipSessionMinutes * 60_000L;

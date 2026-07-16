@@ -6,12 +6,10 @@ package com.arnebiae.mctgauth.auth;
 public class PlayerAuthEntry {
 	public AuthState state = AuthState.UNBOUND;
 
-	// 冻结时记录的原始位置，用于位置重同步。
+	// 冻结时记录的原始位置，用于位置重同步（旋转不锁定，允许玩家环顾四周）。
 	public double freezeX;
 	public double freezeY;
 	public double freezeZ;
-	public float freezeYaw;
-	public float freezePitch;
 	public String freezeDimension;
 
 	/** 踢出截止 tick（服务器总 tick 数）。 */

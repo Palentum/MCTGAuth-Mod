@@ -110,10 +110,8 @@ public final class AccountCommand {
 			player.sendSystemMessage(msg.get("alreadyLoggedIn"));
 			return 1;
 		}
-		if (entry.state == AuthState.UNBOUND) {
-			player.sendSystemMessage(msg.get("notBound"));
-			return 1;
-		}
+		// 不做本地未绑定拦截：绑定可能刚在 Telegram 完成而本地缓存未刷新，
+		// 以 Bot 服务端为权威，未绑定时由 handleLoginError 的 not_bound 分支提示。
 		if (entry.pendingLoginRequestId != null) {
 			player.sendSystemMessage(msg.get("alreadyPending"));
 			return 1;
@@ -132,6 +130,8 @@ public final class AccountCommand {
 				handleLoginError(online, msg, current, ex);
 				return;
 			}
+			// 登录请求创建成功即证明已绑定，同步刷新本地状态。
+			current.state = AuthState.BOUND_UNAUTHENTICATED;
 			current.pendingLoginRequestId = resp.requestId;
 			// 让轮询尽快开始。
 			current.pollCooldownUntilTick = auth.serverTick();
@@ -147,7 +147,7 @@ public final class AccountCommand {
 			if ("not_bound".equals(code)) {
 				// 服务端认为未绑定，回退到未绑定状态并引导注册。
 				entry.state = AuthState.UNBOUND;
-				online.sendSystemMessage(msg.get("needRegister"));
+				online.sendSystemMessage(msg.get("notBound"));
 				return;
 			}
 			if ("rate_limited".equals(code)) {
