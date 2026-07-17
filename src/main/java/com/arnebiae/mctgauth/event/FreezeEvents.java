@@ -8,6 +8,7 @@ import net.fabricmc.fabric.api.event.player.PlayerBlockBreakEvents;
 import net.fabricmc.fabric.api.event.player.UseBlockCallback;
 import net.fabricmc.fabric.api.event.player.UseEntityCallback;
 import net.fabricmc.fabric.api.event.player.UseItemCallback;
+import net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.message.v1.ServerMessageEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
@@ -31,6 +32,10 @@ public final class FreezeEvents {
 				auth.onJoin(handler.getPlayer()));
 		ServerPlayConnectionEvents.DISCONNECT.register((handler, server) ->
 				auth.onDisconnect(handler.getPlayer()));
+
+		// 重生：死亡玩家点重生回到世界后，未认证时以新位置重新冻结（避免卡死在死亡界面）。
+		ServerPlayerEvents.AFTER_RESPAWN.register((oldPlayer, newPlayer, alive) ->
+				auth.onRespawn(newPlayer));
 
 		// 每 tick 驱动。
 		ServerTickEvents.END_SERVER_TICK.register(auth::onEndServerTick);

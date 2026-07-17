@@ -137,6 +137,31 @@ public class AuthManager {
 	}
 
 	/**
+	 * 玩家重生：以重生后的新位置重建冻结点。主线程调用。
+	 *
+	 * 触发场景是玩家在死亡界面点击“重生”（带死亡状态加入，或冻结期间被绕过无敌的伤害杀死）。
+	 * 死亡界面下客户端无法打开聊天/命令输入框，唯一能发的交互就是重生封包，故 mixin 放行它，
+	 * 否则玩家会卡死在死亡界面无法登录。重生会创建新的 ServerPlayer 且位置/维度变为重生点或床，
+	 * 必须刷新冻结点坐标、并发冻结镜像与无敌标志。已认证玩家正常重生，不重新冻结。
+	 */
+	public void onRespawn(ServerPlayer player) {
+		UUID uuid = player.getUUID();
+		PlayerAuthEntry entry = entries.get(uuid);
+		if (entry == null || entry.state == AuthState.AUTHENTICATED) {
+			return; // 不在冻结管理中，或已认证无需重新冻结。
+		}
+		// 以重生后的新位置为冻结点。
+		entry.freezeX = player.getX();
+		entry.freezeY = player.getY();
+		entry.freezeZ = player.getZ();
+		entry.freezeDimension = player.level().dimension().identifier().toString();
+		// 重生创建了新的 ServerPlayer 实例，重新开启无敌并保存其原始值供解冻恢复。
+		entry.savedInvulnerable = player.isInvulnerable();
+		player.setInvulnerable(true);
+		frozenPositions.put(uuid, new Vec3(entry.freezeX, entry.freezeY, entry.freezeZ));
+	}
+
+	/**
 	 * 玩家主动登出：以当前位置重新冻结、回到已绑定未认证、清除同 IP 会话。主线程调用。
 	 * 仅使本次会话失效，不解除 Telegram 绑定，故无需通知 Bot 服务。
 	 */

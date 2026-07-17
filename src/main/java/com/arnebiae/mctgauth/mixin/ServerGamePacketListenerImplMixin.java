@@ -17,6 +17,7 @@ import net.minecraft.network.protocol.game.ServerboundChatCommandSignedPacket;
 import net.minecraft.network.protocol.game.ServerboundChatPacket;
 import net.minecraft.network.protocol.game.ServerboundChatSessionUpdatePacket;
 import net.minecraft.network.protocol.game.ServerboundChunkBatchReceivedPacket;
+import net.minecraft.network.protocol.game.ServerboundClientCommandPacket;
 import net.minecraft.network.protocol.game.ServerboundClientTickEndPacket;
 import net.minecraft.network.protocol.game.ServerboundConfigurationAcknowledgedPacket;
 import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
@@ -41,7 +42,7 @@ import java.util.UUID;
  * 采用“默认拒绝”白名单：在协议分发的唯一入口 {@code shouldHandleMessage} 处，
  * 冻结时丢弃一切不在白名单内的封包（vanilla 对 {@code shouldHandleMessage} 返回 false 的
  * 封包会静默丢弃，无断连、无报错）。这一次性堵死所有会改动世界/背包/玩家状态的封包
- * （创造槽注入、playerCommand、clientCommand、配方书、容器/物品族、告示牌等），
+ * （创造槽注入、playerCommand、配方书、容器/物品族、告示牌等），
  * 并防止未来新增封包留下缺口——黑名单天然漏项，白名单不会。
  *
  * 白名单内仍需精细过滤的封包由下方逻辑继续处理：
@@ -74,6 +75,11 @@ public abstract class ServerGamePacketListenerImplMixin {
 		ServerboundChatPacket.class,
 		ServerboundChatAckPacket.class,              // 聊天计数确认，签名命令依赖
 		ServerboundChatSessionUpdatePacket.class,    // 注册签名公钥，签名命令依赖
+		// —— 死亡重生：放行重生封包，让带死亡状态加入的玩家能点重生回到世界后再登录。
+		//    死亡界面下客户端唯一能发的交互就是它，聊天/命令输入框此时打不开；重生后
+		//    AuthManager.onRespawn 以新位置立即重新冻结，PERFORM_RESPAWN 在未死时被 vanilla
+		//    忽略、REQUEST_STATS 只读，均无绕过认证风险。——
+		ServerboundClientCommandPacket.class,
 		// —— 连接 / 流控 / 设置，无副作用 ——
 		ServerboundPongPacket.class,
 		ServerboundClientInformationPacket.class,    // 客户端语言/视距等设置
