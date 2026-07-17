@@ -18,6 +18,8 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 
 import java.net.URI;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
 /**
@@ -219,13 +221,14 @@ public final class AccountCommand {
 
 	/** 构造可点击的 Telegram 深链组件；URL 非法时退化为纯文本，避免异常中断回调。 */
 	private static Component deepLink(AuthManager auth, String botUsername, String token) {
-		String bot = safe(botUsername);
-		String url = "https://t.me/" + bot + "?start=" + safe(token);
+		String url = "https://t.me/" + URLEncoder.encode(safe(botUsername), StandardCharsets.UTF_8)
+				+ "?start=" + URLEncoder.encode(safe(token), StandardCharsets.UTF_8);
 		MutableComponent text = Component.literal(auth.messages().raw("registerLinkText"));
 		try {
 			return text.withStyle(Style.EMPTY.withClickEvent(new ClickEvent.OpenUrl(URI.create(url))));
 		} catch (IllegalArgumentException e) {
-			McTgAuthMod.LOGGER.warn("构造 Telegram 深链失败，退化为纯文本：{}", url, e);
+			// token 是可绑定账号的凭据，且 URISyntaxException 的消息会携带完整 URL，故不记录 URL 与异常详情。
+			McTgAuthMod.LOGGER.warn("构造 Telegram 深链失败，退化为纯文本");
 			return text;
 		}
 	}
