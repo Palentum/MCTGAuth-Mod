@@ -219,6 +219,12 @@ public class AuthManager {
 			// 等待 Telegram 绑定（已发注册令牌）或等待登录批准期间暂停发送，避免刷屏。
 			if (entry.nextReminderTick != 0 && serverTick >= entry.nextReminderTick) {
 				entry.nextReminderTick = serverTick + REMINDER_INTERVAL_TICKS;
+				// 注册令牌过期后清除等待绑定标记，恢复提示；否则玩家放弃绑定时
+				// 提示会永久暂停直至被踢（Bot 侧以 now >= expires_at 判过期，此处对齐）。
+				if (entry.awaitingBinding && entry.bindingTokenExpiresAtMillis != 0
+						&& System.currentTimeMillis() >= entry.bindingTokenExpiresAtMillis) {
+					entry.awaitingBinding = false;
+				}
 				if (entry.pendingLoginRequestId == null && !entry.awaitingBinding) {
 					player.sendSystemMessage(messages.get(
 							entry.state == AuthState.BOUND_UNAUTHENTICATED ? "needLogin" : "needRegister"));

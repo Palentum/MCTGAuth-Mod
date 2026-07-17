@@ -88,6 +88,9 @@ public final class AccountCommand {
 			}
 			// 先置等待绑定：必须早于发消息/深链，避免文案构造抛异常跳过该行导致 needRegister 提示继续刷屏。
 			entry.awaitingBinding = true;
+			// 记录令牌过期时刻（契约为 Unix 秒），令牌过期后由 tick 恢复 needRegister 周期提示，
+			// 避免玩家放弃绑定时提示永久暂停直至被踢。
+			entry.bindingTokenExpiresAtMillis = resp.expiresAt > 0 ? resp.expiresAt * 1000L : 0L;
 			// 展示 token、机器人用户名与可点击深链。
 			online.sendSystemMessage(msg.get("registerToken", "token", safe(resp.token), "bot", safe(resp.botUsername)));
 			online.sendSystemMessage(deepLink(auth, resp.botUsername, resp.token));

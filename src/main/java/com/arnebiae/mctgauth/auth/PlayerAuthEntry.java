@@ -42,6 +42,9 @@ public class PlayerAuthEntry {
 	/** 已发放注册令牌、等待玩家在 Telegram 完成绑定期间为 true，暂停周期提示。 */
 	public boolean awaitingBinding;
 
+	/** 注册令牌过期时刻（毫秒），过期后清除 awaitingBinding 恢复周期提示；0 表示未知，维持暂停。 */
+	public long bindingTokenExpiresAtMillis;
+
 	/** register 命令在途标志：HTTP 发起到回调期间为 true，防止重复创建绑定令牌。 */
 	public boolean registerInFlight;
 
