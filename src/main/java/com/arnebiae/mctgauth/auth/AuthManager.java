@@ -23,7 +23,8 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * 线程模型：
  *  - entries、ipSessions 及绝大多数方法只在服务器主线程访问。
- *  - frozenUuids 是并发集合，供 netty 线程上的 mixin 只读判断“是否冻结”。
+ *  - frozenPositions 是并发映射（uuid → 冻结点），供 netty 线程上的 mixin 只读判断
+ *    “是否冻结”并读取冻结点坐标（Vec3 不可变，经并发 map 发布跨线程安全）。
  *  - 所有 HTTP 回调必须先 server.execute(...) 跳回主线程，再重新校验玩家在线。
  */
 public class AuthManager {
@@ -44,8 +45,9 @@ public class AuthManager {
 	private final Map<UUID, PlayerAuthEntry> entries = new HashMap<>();
 	private final Map<UUID, IpSession> ipSessions = new HashMap<>();
 
-	// netty 线程可读的冻结镜像。
-	private static final Set<UUID> frozenUuids = ConcurrentHashMap.newKeySet();
+	// netty 线程可读的冻结镜像：uuid → 冻结点坐标。mixin 判断越位时必须与冻结点
+	// 比较而非 ServerPlayer 实时坐标——后者归主线程所有，跨线程读取存在数据竞争。
+	private static final Map<UUID, Vec3> frozenPositions = new ConcurrentHashMap<>();
 
 	// netty 线程写、主线程消费的待拉回标记：mixin 取消越位移动包后置位。
 	private static final Set<UUID> pendingResync = ConcurrentHashMap.newKeySet();
@@ -71,7 +73,12 @@ public class AuthManager {
 
 	/** 供 mixin（netty 线程）判断玩家是否处于冻结状态。 */
 	public static boolean isFrozen(UUID uuid) {
-		return frozenUuids.contains(uuid);
+		return frozenPositions.containsKey(uuid);
+	}
+
+	/** 供 mixin（netty 线程）读取玩家冻结点坐标；未冻结返回 null。 */
+	public static Vec3 getFreezePosition(UUID uuid) {
+		return frozenPositions.get(uuid);
 	}
 
 	/** 供 mixin（netty 线程）在取消越位移动包后请求主线程把客户端拉回冻结点。 */
@@ -100,7 +107,7 @@ public class AuthManager {
 		entry.deadlineTick = serverTick + (long) config.kickTimeoutSeconds * 20L;
 
 		entries.put(uuid, entry);
-		frozenUuids.add(uuid);
+		frozenPositions.put(uuid, new Vec3(entry.freezeX, entry.freezeY, entry.freezeZ));
 
 		// IP 会话命中则直接认证。
 		String ip = extractIp(player);
@@ -121,7 +128,7 @@ public class AuthManager {
 	public void onDisconnect(ServerPlayer player) {
 		UUID uuid = player.getUUID();
 		PlayerAuthEntry entry = entries.remove(uuid);
-		frozenUuids.remove(uuid);
+		frozenPositions.remove(uuid);
 		pendingResync.remove(uuid);
 		if (entry != null && entry.pendingLoginRequestId != null) {
 			// fire-and-forget：忽略结果与异常。
@@ -156,7 +163,7 @@ public class AuthManager {
 		// 清除同 IP 会话，避免断线重连后被自动登录绕过重新认证。
 		ipSessions.remove(uuid);
 
-		frozenUuids.add(uuid);
+		frozenPositions.put(uuid, new Vec3(entry.freezeX, entry.freezeY, entry.freezeZ));
 		player.sendSystemMessage(messages.get("loggedOut"));
 	}
 
@@ -192,7 +199,7 @@ public class AuthManager {
 			// 避免遍历期间被后续 DISCONNECT 回调并发修改。
 			if (serverTick >= entry.deadlineTick) {
 				it.remove();
-				frozenUuids.remove(uuid);
+				frozenPositions.remove(uuid);
 				pendingResync.remove(uuid);
 				if (entry.pendingLoginRequestId != null) {
 					api.cancelLoginRequest(entry.pendingLoginRequestId).exceptionally(ex -> null);
@@ -353,7 +360,7 @@ public class AuthManager {
 	/** 解冻玩家：恢复无敌、记录 IP 会话、发送欢迎消息。主线程调用。 */
 	public void unfreeze(ServerPlayer player, PlayerAuthEntry entry, Component welcome) {
 		UUID uuid = player.getUUID();
-		frozenUuids.remove(uuid);
+		frozenPositions.remove(uuid);
 		pendingResync.remove(uuid);
 		player.setInvulnerable(entry.savedInvulnerable);
 		if (config.ipSessionMinutes > 0) {

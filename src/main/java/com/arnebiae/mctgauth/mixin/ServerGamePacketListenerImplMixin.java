@@ -23,6 +23,7 @@ import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
 import net.minecraft.network.protocol.game.ServerboundPlayerLoadedPacket;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.phys.Vec3;
 
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -121,8 +122,9 @@ public abstract class ServerGamePacketListenerImplMixin {
 
 	@Inject(method = "handleMovePlayer", at = @At("HEAD"), cancellable = true)
 	private void mctgauth$onMovePlayer(ServerboundMovePlayerPacket packet, CallbackInfo ci) {
-		if (!isFrozen()) {
-			return;
+		Vec3 freezePos = AuthManager.getFreezePosition(player.getUUID());
+		if (freezePos == null) {
+			return; // 未冻结
 		}
 		// 纯转头包放行，允许玩家冻结期间环顾四周。
 		if (!packet.hasPosition()) {
@@ -130,11 +132,14 @@ public abstract class ServerGamePacketListenerImplMixin {
 		}
 		ci.cancel();
 		// 被取消的移动包不会更新服务端位置，客户端会在本地自由走动，
-		// 必须主动把客户端拉回。冻结期间服务端位置不变，netty 线程读取安全。
-		// 仅在客户端坐标实际偏离时请求拉回，避免 teleport 确认包引发循环。
-		double dx = packet.getX(player.getX()) - player.getX();
-		double dy = packet.getY(player.getY()) - player.getY();
-		double dz = packet.getZ(player.getZ()) - player.getZ();
+		// 必须主动把客户端拉回。偏移比较基准用冻结点的并发镜像，而非
+		// ServerPlayer 实时坐标——后者归主线程所有，外力（水流、活塞、
+		// 击退）随时改动，netty 线程读取存在数据竞争。仅在客户端坐标
+		// 实际偏离冻结点时请求拉回：teleport 确认包的位置恰为冻结点，
+		// 偏移为零不置位，避免拉回循环。
+		double dx = packet.getX(freezePos.x) - freezePos.x;
+		double dy = packet.getY(freezePos.y) - freezePos.y;
+		double dz = packet.getZ(freezePos.z) - freezePos.z;
 		if (dx * dx + dy * dy + dz * dz > 1.0e-4) {
 			AuthManager.requestResync(player.getUUID());
 		}
