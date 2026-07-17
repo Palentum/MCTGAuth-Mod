@@ -117,10 +117,31 @@ public class BotApiClient {
 						if (parsed == null) {
 							throw new ApiException(code, null, "响应体为空");
 						}
+						String missing = missingRequiredField(parsed);
+						if (missing != null) {
+							// 2xx 但缺必填字段视为畸形响应，按服务不可用处理，不得进入成功流程。
+							throw new ApiException(code, null, "响应缺少必填字段 " + missing);
+						}
 						return parsed;
 					}
 					throw toApiException(code, body);
 				});
+	}
+
+	/** 返回 2xx 响应中缺失的必填字段名；完整时返回 null。 */
+	private static String missingRequiredField(Object parsed) {
+		return switch (parsed) {
+			case TokenResponse r when isBlank(r.token) -> "token";
+			case TokenResponse r when isBlank(r.botUsername) -> "bot_username";
+			case LoginRequestResponse r when isBlank(r.requestId) -> "request_id";
+			case StatusResponse r when isBlank(r.status) -> "status";
+			case BindingResponse r when r.bound == null -> "bound";
+			default -> null;
+		};
+	}
+
+	private static boolean isBlank(String s) {
+		return s == null || s.isBlank();
 	}
 
 	private ApiException toApiException(int code, String body) {
