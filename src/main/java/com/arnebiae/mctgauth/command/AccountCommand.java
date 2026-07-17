@@ -71,20 +71,21 @@ public final class AccountCommand {
 		MinecraftServer server = source.getServer();
 		String name = player.getGameProfile().name();
 		auth.api().createRegisterToken(uuid, name).whenComplete((resp, ex) -> server.execute(() -> {
-			ServerPlayer online = server.getPlayerList().getPlayer(uuid);
 			PlayerAuthEntry current = auth.getEntry(uuid);
-			if (current != null) {
-				current.registerInFlight = false; // HTTP 已结束，无论成败解除在途
+			if (current != entry) {
+				return; // 条目已更替（断线重连）或已移除，旧回调不得触碰新会话状态。
 			}
-			if (online == null || current == null) {
+			entry.registerInFlight = false; // HTTP 已结束，无论成败解除在途
+			ServerPlayer online = server.getPlayerList().getPlayer(uuid);
+			if (online == null) {
 				return;
 			}
 			if (ex != null) {
-				handleRegisterError(online, msg, current, ex);
+				handleRegisterError(online, msg, entry, ex);
 				return;
 			}
 			// 先置等待绑定：必须早于发消息/深链，避免文案构造抛异常跳过该行导致 needRegister 提示继续刷屏。
-			current.awaitingBinding = true;
+			entry.awaitingBinding = true;
 			// 展示 token、机器人用户名与可点击深链。
 			online.sendSystemMessage(msg.get("registerToken", "token", safe(resp.token), "bot", safe(resp.botUsername)));
 			online.sendSystemMessage(deepLink(auth, resp.botUsername, resp.token));
@@ -146,25 +147,31 @@ public final class AccountCommand {
 		String name = player.getGameProfile().name();
 		String ip = AuthManager.extractIp(player);
 		auth.api().createLoginRequest(uuid, name, ip).whenComplete((resp, ex) -> server.execute(() -> {
-			ServerPlayer online = server.getPlayerList().getPlayer(uuid);
 			PlayerAuthEntry current = auth.getEntry(uuid);
-			if (current != null) {
-				current.loginInFlight = false; // HTTP 已结束，无论成败解除在途
+			if (current != entry) {
+				// 条目已更替（断线重连）或已移除，旧回调不得触碰新会话状态；
+				// 旧登录请求不再被任何会话轮询，主动撤销，避免在 Bot 侧悬挂可批准的请求。
+				if (ex == null && resp.requestId != null) {
+					auth.api().cancelLoginRequest(resp.requestId).exceptionally(e -> null);
+				}
+				return;
 			}
-			if (online == null || current == null) {
+			entry.loginInFlight = false; // HTTP 已结束，无论成败解除在途
+			ServerPlayer online = server.getPlayerList().getPlayer(uuid);
+			if (online == null) {
 				return;
 			}
 			if (ex != null) {
-				handleLoginError(online, msg, current, ex);
+				handleLoginError(online, msg, entry, ex);
 				return;
 			}
 			// 登录请求创建成功即证明已绑定，同步刷新本地状态。
-			current.state = AuthState.BOUND_UNAUTHENTICATED;
-			current.pendingLoginRequestId = resp.requestId;
+			entry.state = AuthState.BOUND_UNAUTHENTICATED;
+			entry.pendingLoginRequestId = resp.requestId;
 			// 让轮询尽快开始。
-			current.pollCooldownUntilTick = auth.serverTick();
+			entry.pollCooldownUntilTick = auth.serverTick();
 			// 已确认绑定并进入等待批准，清除等待绑定标记；此后由 pendingLoginRequestId 负责暂停提示。
-			current.awaitingBinding = false;
+			entry.awaitingBinding = false;
 			online.sendSystemMessage(msg.get("loginSent"));
 		}));
 		return 1;
