@@ -9,6 +9,7 @@ import net.minecraft.network.protocol.common.ServerboundCustomPayloadPacket;
 import net.minecraft.network.protocol.common.ServerboundKeepAlivePacket;
 import net.minecraft.network.protocol.common.ServerboundPongPacket;
 import net.minecraft.network.protocol.common.ServerboundResourcePackPacket;
+import net.minecraft.network.protocol.common.custom.BrandPayload;
 import net.minecraft.network.protocol.game.ServerboundAcceptTeleportationPacket;
 import net.minecraft.network.protocol.game.ServerboundChatAckPacket;
 import net.minecraft.network.protocol.game.ServerboundChatCommandPacket;
@@ -20,6 +21,7 @@ import net.minecraft.network.protocol.game.ServerboundClientTickEndPacket;
 import net.minecraft.network.protocol.game.ServerboundConfigurationAcknowledgedPacket;
 import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
 import net.minecraft.network.protocol.game.ServerboundPlayerLoadedPacket;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerPlayer;
 
 import org.spongepowered.asm.mixin.Mixin;
@@ -29,6 +31,7 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -40,9 +43,11 @@ import java.util.UUID;
  * （创造槽注入、playerCommand、clientCommand、配方书、容器/物品族、告示牌等），
  * 并防止未来新增封包留下缺口——黑名单天然漏项，白名单不会。
  *
- * 白名单内仍需精细过滤的封包（移动、命令）由下方各 handle* 注入继续处理：
- *  - 移动：放行纯转头，取消越位并请求拉回；
- *  - 命令：仅放行 /account。
+ * 白名单内仍需精细过滤的封包由下方逻辑继续处理：
+ *  - 移动：放行纯转头，取消越位并请求拉回（handleMovePlayer 注入）；
+ *  - 命令：仅放行 /account（handleChatCommand 注入）；
+ *  - 自定义载荷：按通道 ID 白名单过滤，整类放行会让任意模组注册的
+ *    C2S 接收器（可能改动物品、经济、传送等状态）绕过冻结。
  * 只读并发冻结集，任何游戏状态改动都通过 AuthManager 调度回主线程。
  */
 @Mixin(net.minecraft.server.network.ServerGamePacketListenerImpl.class)
@@ -71,7 +76,6 @@ public abstract class ServerGamePacketListenerImplMixin {
 		// —— 连接 / 流控 / 设置，无副作用 ——
 		ServerboundPongPacket.class,
 		ServerboundClientInformationPacket.class,    // 客户端语言/视距等设置
-		ServerboundCustomPayloadPacket.class,        // 客户端 brand / 模组通道，模组兼容
 		ServerboundResourcePackPacket.class,         // 资源包状态，避免要求资源包的服务器误踢
 		ServerboundConfigurationAcknowledgedPacket.class, // 切回配置阶段确认
 		ServerboundClientTickEndPacket.class,        // 客户端 tick 边界标记
@@ -80,12 +84,31 @@ public abstract class ServerGamePacketListenerImplMixin {
 	};
 
 	/**
+	 * 冻结期间放行的自定义载荷通道白名单。自定义载荷不能整类放行：
+	 * 任意模组注册的 C2S 接收器都可能带游戏副作用。仅放行两类无副作用通道：
+	 *  - minecraft:brand — 客户端 brand 上报；
+	 *  - minecraft:register / minecraft:unregister — Fabric API 通道通告，
+	 *    只更新服务端记录的客户端可用通道，丢弃会破坏解冻后的模组通信。
+	 */
+	private static final Set<Identifier> MCTGAUTH$ALLOWED_PAYLOAD_IDS = Set.of(
+		BrandPayload.TYPE.id(),
+		Identifier.withDefaultNamespace("register"),
+		Identifier.withDefaultNamespace("unregister"));
+
+	/**
 	 * 协议分发入口：冻结时对非白名单封包返回 false，令 vanilla 静默丢弃。
 	 * 白名单封包放行，交由 vanilla 及下游 handle* 注入继续处理。
 	 */
 	@Inject(method = "shouldHandleMessage", at = @At("HEAD"), cancellable = true)
 	private void mctgauth$gateFrozen(Packet<?> packet, CallbackInfoReturnable<Boolean> cir) {
 		if (!isFrozen()) {
+			return;
+		}
+		// 自定义载荷按通道 ID 过滤，不进入整类白名单。
+		if (packet instanceof ServerboundCustomPayloadPacket custom) {
+			if (!MCTGAUTH$ALLOWED_PAYLOAD_IDS.contains(custom.payload().type().id())) {
+				cir.setReturnValue(false);
+			}
 			return;
 		}
 		for (Class<?> allowed : MCTGAUTH$FROZEN_WHITELIST) {
