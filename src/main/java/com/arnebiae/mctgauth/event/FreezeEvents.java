@@ -8,18 +8,20 @@ import net.fabricmc.fabric.api.event.player.PlayerBlockBreakEvents;
 import net.fabricmc.fabric.api.event.player.UseBlockCallback;
 import net.fabricmc.fabric.api.event.player.UseEntityCallback;
 import net.fabricmc.fabric.api.event.player.UseItemCallback;
+import net.fabricmc.fabric.api.entity.event.v1.ServerLivingEntityEvents;
 import net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.message.v1.ServerMessageEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 
+import net.minecraft.tags.DamageTypeTags;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.player.Player;
 
 import java.util.UUID;
 
 /**
- * 通过 Fabric API 事件拦截冻结玩家的破坏 / 攻击 / 使用 / 聊天等行为。
+ * 通过 Fabric API 事件拦截冻结玩家的破坏 / 攻击 / 使用 / 受伤 / 聊天等行为。
  * 移动 / 载具 / 背包 / 命令包在 mixin 中拦截。
  */
 public final class FreezeEvents {
@@ -55,6 +57,15 @@ public final class FreezeEvents {
 				isFrozen(player) ? InteractionResult.FAIL : InteractionResult.PASS);
 		UseEntityCallback.EVENT.register((player, level, hand, entity, hitResult) ->
 				isFrozen(player) ? InteractionResult.FAIL : InteractionResult.PASS);
+
+		// 受伤：冻结时取消。不用 setInvulnerable 保护——无敌标志会随 playerdata 持久化，
+		// 冻结中断线会把 true 固化进存档，下次加入被当作玩家原始状态保存、认证后恢复，
+		// 导致永久无敌。放行穿透无敌的伤害（虚空、/kill），保证冻结玩家仍能死亡进入
+		// 重生流程，不会卡在虚空反复被拉回。
+		ServerLivingEntityEvents.ALLOW_DAMAGE.register((entity, source, amount) ->
+				!(entity instanceof Player player)
+						|| !isFrozen(player)
+						|| source.is(DamageTypeTags.BYPASSES_INVULNERABILITY));
 
 		// 聊天：冻结时拦截并给出节流提示。
 		ServerMessageEvents.ALLOW_CHAT_MESSAGE.register((message, sender, params) -> {

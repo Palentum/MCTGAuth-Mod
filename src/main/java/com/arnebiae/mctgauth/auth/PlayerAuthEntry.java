@@ -30,9 +30,6 @@ public class PlayerAuthEntry {
 	/** 绑定查询失败后的重试 tick（0 表示无待重试）。 */
 	public long bindingRetryAtTick;
 
-	/** 冻结前玩家原本的无敌状态，解冻时恢复。 */
-	public boolean savedInvulnerable;
-
 	/** 上次发送 frozenHint 的时间戳（毫秒），用于节流。 */
 	public long lastHintMillis;
 

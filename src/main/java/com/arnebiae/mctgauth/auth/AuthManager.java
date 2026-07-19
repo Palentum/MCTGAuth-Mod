@@ -99,10 +99,6 @@ public class AuthManager {
 		entry.freezeZ = player.getZ();
 		entry.freezeDimension = player.level().dimension().identifier().toString();
 
-		// 保存并开启无敌，避免冻结期间被伤害。
-		entry.savedInvulnerable = player.isInvulnerable();
-		player.setInvulnerable(true);
-
 		// 设置踢出截止。
 		entry.deadlineTick = serverTick + (long) config.kickTimeoutSeconds * 20L;
 
@@ -142,7 +138,7 @@ public class AuthManager {
 	 * 触发场景是玩家在死亡界面点击“重生”（带死亡状态加入，或冻结期间被绕过无敌的伤害杀死）。
 	 * 死亡界面下客户端无法打开聊天/命令输入框，唯一能发的交互就是重生封包，故 mixin 放行它，
 	 * 否则玩家会卡死在死亡界面无法登录。重生会创建新的 ServerPlayer 且位置/维度变为重生点或床，
-	 * 必须刷新冻结点坐标、并发冻结镜像与无敌标志。已认证玩家正常重生，不重新冻结。
+	 * 必须刷新冻结点坐标与并发冻结镜像。已认证玩家正常重生，不重新冻结。
 	 */
 	public void onRespawn(ServerPlayer player) {
 		UUID uuid = player.getUUID();
@@ -155,9 +151,6 @@ public class AuthManager {
 		entry.freezeY = player.getY();
 		entry.freezeZ = player.getZ();
 		entry.freezeDimension = player.level().dimension().identifier().toString();
-		// 重生创建了新的 ServerPlayer 实例，重新开启无敌并保存其原始值供解冻恢复。
-		entry.savedInvulnerable = player.isInvulnerable();
-		player.setInvulnerable(true);
 		frozenPositions.put(uuid, new Vec3(entry.freezeX, entry.freezeY, entry.freezeZ));
 	}
 
@@ -173,10 +166,6 @@ public class AuthManager {
 		entry.freezeY = player.getY();
 		entry.freezeZ = player.getZ();
 		entry.freezeDimension = player.level().dimension().identifier().toString();
-
-		// 保存并开启无敌，避免冻结期间被伤害。
-		entry.savedInvulnerable = player.isInvulnerable();
-		player.setInvulnerable(true);
 
 		// 回到已绑定未认证，并重新计时踢出截止。
 		entry.state = AuthState.BOUND_UNAUTHENTICATED;
@@ -382,12 +371,11 @@ public class AuthManager {
 
 	// ============ 解冻 ============
 
-	/** 解冻玩家：恢复无敌、记录 IP 会话、发送欢迎消息。主线程调用。 */
+	/** 解冻玩家：移出冻结集（同时解除伤害保护）、记录 IP 会话、发送欢迎消息。主线程调用。 */
 	public void unfreeze(ServerPlayer player, PlayerAuthEntry entry, Component welcome) {
 		UUID uuid = player.getUUID();
 		frozenPositions.remove(uuid);
 		pendingResync.remove(uuid);
-		player.setInvulnerable(entry.savedInvulnerable);
 		if (config.ipSessionMinutes > 0) {
 			long expiresAt = System.currentTimeMillis() + (long) config.ipSessionMinutes * 60_000L;
 			ipSessions.put(uuid, new IpSession(extractIp(player), expiresAt));
